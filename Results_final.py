@@ -22,6 +22,9 @@ from select_DANN import evaluate_DANN
 from utils import Proxy_A,randomise
 from NCA import NCA
 
+# np.random.seed(9)
+# tf.random.set_seed(9)
+
 def TL_with_standardisation(Xs,Xt,x_test):
     "Uses standardisation to align the means (mu=0) and standard deviations (std=1) of two datasets Xs and Xt"
     stand=StandardScaler()
@@ -59,7 +62,8 @@ def pairplt(X_s,X_t,y_s,y_t,title):
 def knn_f1(Xs,ys,xtest,ytest):
     knn=KNeighborsClassifier(n_neighbors=1).fit(Xs,ys)
     pred=knn.predict(xtest)
-    return f1_score(np.ravel(ytest), pred,average='macro')
+
+    return f1_score(np.ravel(ytest), pred, average='macro')
           
 def DA_methods(X_s,X_t,ys,yt,x_test,y_test,reps=1):
     "For a given source and target dataset get the macro-F1 scores and PADs for the GFK, TCA, BDA and the DANN"
@@ -75,8 +79,9 @@ def DA_methods(X_s,X_t,ys,yt,x_test,y_test,reps=1):
     Xs,Xt=tca.fit(X_s,X_t)
     tca.train(X_s,ys) 
     tcaA=Proxy_A(Xs,Xt,kernel='rbf')
-    tcaF1=tca.predict(x_test,y_test)[2]
-    
+    preds,acc,tcaF1=tca.predict(x_test,y_test)
+    print(preds,acc)
+     
     bda=BDA()
     Xs,Xt=bda.fit(X_s,X_t,ys)
     bdaA=Proxy_A(Xs,Xt,kernel='rbf')
@@ -107,21 +112,17 @@ def DA_methods(X_s,X_t,ys,yt,x_test,y_test,reps=1):
             'BN':True,
             'lr':1e-4,
             'type':'dense'}
-    dannF1,DANN_best_loss, DANN_best_f1,dannA= evaluate_DANN(params,dataset,test_data,
+    dannF1,DANN_best_loss, DANN_list_f1,dannA= evaluate_DANN(params,dataset,test_data,
                                                                     epochs=500,repeats=reps,method='adversarial',
                                                                     name='DANN',pretrain=False)
+    dann_mean = np.mean(DANN_list_f1)
+    dann_std = np.std(DANN_list_f1)
     
-    return [gfkF1,tcaF1,bdaF1,dannF1],[gfkA,tcaA,bdaA,dannA]
+    return [gfkF1,tcaF1,bdaF1,dannF1],[gfkA,tcaA,bdaA,dannA],[dann_mean,dann_std,max(DANN_list_f1),min(DANN_list_f1)]
 
 def DA_results(X_s,ys,X_t,yt,x_test,y_test,name,reps=10):
     "Returns F1 scores and PADs for a the N-stand,A-stand,CORAL, NCA, NCORAL, GFK, TCA, BDA and the DANN"
-    #N-stand
-    stand=StandardScaler().fit(np.vstack((X_s,X_t)))
-    Xs=stand.transform(X_s)
-    Xt=stand.transform(X_t)
-    xtest=stand.transform(x_test)
-    rawA =Proxy_A(Xs,Xt,kernel='rbf')
-    rawF1=knn_f1(Xs,ys,xtest,y_test)
+    
 
     #A-stand
     Xs,Xt,xtest=TL_with_standardisation(X_s,X_t,x_test)
@@ -132,8 +133,8 @@ def DA_results(X_s,ys,X_t,yt,x_test,y_test,name,reps=10):
     coral=CORAL()
     coral.fit(Xs,Xt)
     Xs=coral.transform(Xs)
-    ncoralA=Proxy_A(Xs,Xt,kernel='rbf')
-    ncoralF1=knn_f1(Xs,ys,xtest,y_test)
+    coralA=Proxy_A(Xs,Xt,kernel='rbf')
+    coralF1=knn_f1(Xs,ys,xtest,y_test)
     
     #NCA
     Xs,Xt,xtest=NCA(X_s,X_t,ys,yt,x_test,y_test)
@@ -144,15 +145,23 @@ def DA_results(X_s,ys,X_t,yt,x_test,y_test,name,reps=10):
     coral=CORAL()
     coral.fit(Xs,Xt)
     Xs=coral.transform(Xs)
-    coralA=Proxy_A(Xs,Xt,kernel='rbf')
-    coralF1=knn_f1(Xs,ys,xtest,y_test)
+    ncoralA=Proxy_A(Xs,Xt,kernel='rbf')
+    ncoralF1=knn_f1(Xs,ys,xtest,y_test)
+    
+    #N-stand
+    stand=StandardScaler().fit(np.vstack((X_s,X_t)))
+    Xs=stand.transform(X_s)
+    Xt=stand.transform(X_t)
+    xtest=stand.transform(x_test)
+    rawA =Proxy_A(Xs,Xt,kernel='rbf')
+    rawF1=knn_f1(Xs,ys,xtest,y_test)
     
     #[GFK, TCA, BDA, DANN]
-    f1s,pads=DA_methods(X_s,X_t,ys,yt,xtest,y_test,reps)
+    f1s, pads, dann_stats=DA_methods(Xs,Xt,ys,yt,xtest,y_test,reps)
     
     f1S,padS=[rawF1,standF1,coralF1,alignF1,ncoralF1]+f1s,[rawA,standA,coralA,alignA,ncoralA]+pads
     
-    return f1S,padS
+    return f1S,padS, dann_stats
 
 def pre_DA_results(X_s,ys,X_t,yt,x_test,y_test,name,reps=100):
     
@@ -162,8 +171,8 @@ def pre_DA_results(X_s,ys,X_t,yt,x_test,y_test,name,reps=100):
     xtest=stand.transform(x_test)
     rawA =Proxy_A(Xs,Xt,kernel='rbf')
     rawF1=knn_f1(Xs,ys,xtest,y_test)
-    pairplt(Xs,Xt,y_s,y_t,name+'stand')
-    f1s,pads=DA_methods(Xs,Xt,ys,yt,xtest,y_test,100)
+    #pairplt(Xs,Xt,y_s,y_t,name+'stand')
+    f1s,pads, dannstats1=DA_methods(Xs,Xt,ys,yt,xtest,y_test, reps)
     f1_col1,A_col1=[rawF1]+f1s,[rawA]+pads
     
    
@@ -171,7 +180,7 @@ def pre_DA_results(X_s,ys,X_t,yt,x_test,y_test,name,reps=100):
     Xs,Xt,xtest=TL_with_standardisation(X_s,X_t,x_test)
     standA=Proxy_A(Xs,Xt,kernel='rbf')
     standF1=knn_f1(Xs,ys,xtest,y_test)
-    f1s,pads=DA_methods(Xs,Xt,ys,yt,xtest,y_test,100)
+    f1s,pads, dannstats2=DA_methods(Xs,Xt,ys,yt,xtest,y_test, reps)
     f1_col2,A_col2=[standF1]+f1s,[standA]+pads
    
     #coral
@@ -181,40 +190,41 @@ def pre_DA_results(X_s,ys,X_t,yt,x_test,y_test,name,reps=100):
     Xs=coral.transform(Xs)
     coralA=Proxy_A(Xs,Xt,kernel='rbf')
     coralF1=knn_f1(Xs,ys,xtest,y_test)
-    f1s,pads=DA_methods(Xs,Xt,ys,yt,xtest,y_test,100)
+    f1s,pads, dannstats3=DA_methods(Xs,Xt,ys,yt,xtest,y_test, reps)
     f1_col3,A_col3=[coralF1]+f1s,[coralA]+pads
     
     #nca
     Xs,Xt,xtest=NCA(X_s,X_t,ys,yt,x_test,y_test)
     alignA=Proxy_A(Xs,Xt,kernel='rbf')
     alignF1=knn_f1(Xs,ys,xtest,y_test)   
-    pairplt(Xs,Xt,y_s,y_t,name+'align')
-    f1s,pads=DA_methods(Xs,Xt,ys,yt,xtest,y_test,100)
+   # pairplt(Xs,Xt,y_s,y_t,name+'align')
+    f1s,pads, dannstats4=DA_methods(Xs,Xt,ys,yt,xtest,y_test, reps)
     f1_col4,A_col4=[alignF1]+f1s,[alignA]+pads
 
      
-     #ncoral
+    #ncoral
     Xs,Xt,xtest=NCA(X_s,X_t,ys,yt,x_test,y_test)
     coral=CORAL()
     coral.fit_normal(Xs,Xt,y_s,y_t)
     Xs=coral.transform(Xs)
     coralA=Proxy_A(Xs,Xt,kernel='rbf')
     coralF1=knn_f1(Xs,ys,xtest,y_test)
-    pairplt(Xs,Xt,y_s,y_t,name+'coral')
-    f1s,pads=DA_methods(Xs,Xt,ys,yt,xtest,y_test,100)
+   # pairplt(Xs,Xt,y_s,y_t,name+'coral')
+    f1s,pads, dannstats5=DA_methods(Xs,Xt,ys,yt,xtest,y_test, reps)
     f1_col5,A_col5=[coralF1]+f1s,[coralA]+pads 
        
     f1_array=np.array((f1_col1,f1_col2,f1_col3,f1_col4,f1_col5))
     A_array=np.array((A_col1,A_col2,A_col3,A_col4,A_col5))
+    stats_array = np.array((dannstats1, dannstats2, dannstats3, dannstats4, dannstats5))
     
-    return f1_array,A_array
+    return f1_array,A_array, stats_array
  #%% 3-storey population
 methods=['N-Stand','A-Stand','CORAL','NCA','NCORAL','GFK','TCA','BDA','DANN'] 
 
 name='3_to_3.p'
 X_s,y_s,X_t,y_t,X_test,y_test=np.load('.\\data\\3_to_3.p', allow_pickle=True)
 pairplt(X_s,X_t,y_s,y_t,name)
-f1_list,pad_list=DA_results(X_s,y_s,X_t,y_t,X_test,y_test,name,reps=100)
+f1_list,pad_list,stats_3_to_3=DA_results(X_s,y_s,X_t,y_t,X_test,y_test,name,reps=100)
 
 #put data in frame
 df1=DataFrame(data=np.array((f1_list,pad_list)),columns=methods,index=['F1 Score','PAD'])
@@ -225,7 +235,7 @@ df1=DataFrame(data=np.array((f1_list,pad_list)),columns=methods,index=['F1 Score
 name='3_to_3_imbalance.p'
 X_s,y_s,X_t,y_t,X_test,y_test=np.load(".\\data\\"+name, allow_pickle=True)
 pairplt(X_s,X_t,y_s,y_t,name)
-f1_list,pad_list=DA_results(X_s,y_s,X_t,y_t,X_test,y_test,name,reps=100)
+f1_list,pad_list,stats_3_to_3imb=DA_results(X_s,y_s,X_t,y_t,X_test,y_test,name,reps=100)
 
 #put data in frame
 df2=DataFrame(data=np.array((f1_list,pad_list)),columns=methods,index=['F1 Score','PAD'])
@@ -236,25 +246,28 @@ df2=DataFrame(data=np.array((f1_list,pad_list)),columns=methods,index=['F1 Score
 name='3_to_7.p'
 X_s,y_s,X_t,y_t,X_test,y_test=np.load(".\\data\\"+name, allow_pickle=True)
 pairplt(X_s,X_t,y_s,y_t,name)
-f1_array,pad_array=pre_DA_results(X_s,y_s,X_t,y_t,X_test,y_test,name,reps=100)
+f1_array,pad_array, stats_array_3_to_7=pre_DA_results(X_s,y_s,X_t,y_t,X_test,y_test,name,reps=100)
 
 #put data in frame
-df3=DataFrame(data=f1_array.T,columns=['N-Stand','A-Stand','CORAL','NCA','NCORAL'],index=['only stat align','GFK','TCA','BDA','DANN'])
+df3=DataFrame(data=f1_array.T,columns=['N-Stand','A-Stand','CORAL','NCA','NCORAL'], index=['only stat align','GFK','TCA','BDA','DANN'])
 
-df4=DataFrame(data=pad_array.T,columns=['N-Stand','A-Stand','CORAL','NCA','NCA+CORAL'],index=['only stat align','GFK','TCA','BDA','DANN'])
+df4=DataFrame(data=pad_array.T,columns=['N-Stand','A-Stand','CORAL','NCA','NCA+CORAL'], index=['only stat align','GFK','TCA','BDA','DANN'])
 
 
 #%% plot results 
 #bar chats showing f1 and PAD for part 1
 
-def plot_bar(df,name):
+def plot_bar(df,name,stats,methods):
     
     leg=df.columns
     X = np.arange(len(leg))
     fig = plt.figure()
     ax = fig.add_axes([0,0,1,1])
+    methods=methods[:-1]
     
-    ax.bar(X , df.iloc[[0]].squeeze().to_numpy().T, width = 0.9,alpha=0.9)
+    ax.bar(X[:-1] , df.iloc[[0]][methods].squeeze().to_numpy().T, width = 0.9,alpha=0.9)
+    ax.bar(X[-1] , stats[0], yerr = stats[1], width = 0.9,alpha=0.9, color='tab:blue')
+
     ax.set_xticks(X-0.2)
     ax.set_xticklabels(leg)
     plt.setp(ax.get_xticklabels(), fontsize=14, rotation=45)
@@ -262,7 +275,7 @@ def plot_bar(df,name):
     ax.legend(h1,l1, bbox_to_anchor=(1.4, 1.0),fontsize=14)
     ax.set_xlabel('DA Method',fontsize=18)
     ax.set_ylabel('F1 score',fontsize=18)
-    plt.savefig('.\\results\\'+name+'bar(paper).png',bbox_inches=Bbox([[-1, -1], [9, 5]]))
+    #plt.savefig('.\\results\\'+name+'bar(paper).png',bbox_inches=Bbox([[-1, -1], [9, 5]]))
     plt.show()
 
     fig2 = plt.figure()
@@ -275,10 +288,10 @@ def plot_bar(df,name):
     ax2.legend(h2,l2, bbox_to_anchor=(1.4, 1.0),fontsize=14)
     ax2.set_xlabel('DA Method',fontsize=18)
     ax2.set_ylabel('PAD',fontsize=18) 
-    plt.savefig('.\\results\\'+name+'bar(paper).png',bbox_inches=Bbox([[-1, -1], [9, 5]]))
+    #plt.savefig('.\\results\\'+name+'bar(paper).png',bbox_inches=Bbox([[-1, -1], [9, 5]]))
     plt.show()
 
-def plot_bar2(df, name,y_label):
+def plot_bar2(df, name, y_label, stats):
     leg=df.columns
     methods=df.index
     methods=['KNN']+list(methods[1:])
@@ -291,10 +304,15 @@ def plot_bar2(df, name,y_label):
     off=0
     delta=0.9/len(methods)
     count=0
+    
     for method in methods:
-        ax.bar(X + off, df.iloc[[count]].squeeze().to_numpy().T, width = delta,label=method,alpha=0.9)
+        if method == 'DANN':
+            ax.bar(X + off, stats[:,0], yerr = stats[:,1], width = delta, label=method, alpha=0.9)
+        else:
+            ax.bar(X + off, df.iloc[[count]].squeeze().to_numpy(), width = delta, label=method, alpha=0.9)
         off+=delta
-        count+=1
+        count+=1 
+    
     ax.set_xticks(X+0.3)
     ax.set_xticklabels(leg)
     plt.setp(ax.get_xticklabels(), fontsize=14, rotation=45)
@@ -305,7 +323,7 @@ def plot_bar2(df, name,y_label):
     #plt.savefig('.\\results\\'+name+'bar(paper).png',bbox_inches=Bbox([[-1, -1], [9, 5]]))
     plt.show()
     
-plot_bar(df1,'3_to_3')
-plot_bar(df2,'3_to_3_im')
-plot_bar2(df3,'3_to_7','F1 Score') #[['N-Stand','A-Stand','CORAL','NCA','NCA+CORAL']]
+plot_bar(df1,'3_to_3',stats_3_to_3,methods)
+plot_bar(df2,'3_to_3_im',stats_3_to_3imb,methods)
+plot_bar2(df3,'3_to_7','F1 Score', stats_array_3_to_7) #[['N-Stand','A-Stand','CORAL','NCA','NCA+CORAL']]
 plot_bar2(df4,'3_to_7_pad','PAD')
